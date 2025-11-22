@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail};
+use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 
@@ -44,39 +44,43 @@ struct EchoNode {
 }
 
 impl EchoNode {
+    fn reply(&mut self, input: &Message, payload: Payload) -> Message {
+        let msg_id = self.id;
+        self.id += 1;
+        Message {
+            src: self.node_id.clone(),
+            dst: input.src.clone(),
+            body: Body {
+                id: Some(msg_id),
+                in_reply_to: input.body.id,
+                payload,
+            },
+        }
+    }
+
     pub fn handle(&mut self, input: Message) -> anyhow::Result<Message> {
-        match input.body.payload {
+        match &input.body.payload {
             Payload::Init { node_id, node_ids } => {
                 if node_id.is_empty() {
-                    return Err(anyhow!("node_id is empty"));
+                    bail!("node_id is empty");
                 }
-                self.node_id = node_id;
-                self.node_ids = node_ids;
-                return Ok(Message {
-                    src: self.node_id.clone(),
-                    dst: input.src,
-                    body: Body {
-                        id: Some(self.id),
-                        in_reply_to: input.body.id,
-                        payload: Payload::InitOk,
-                    },
-                });
+                self.node_id = node_id.clone();
+                self.node_ids = node_ids.clone();
+                Ok(self.reply(&input, Payload::InitOk))
             }
             Payload::Echo { echo } => {
-                return Ok(Message {
-                    src: self.node_id.clone(),
-                    dst: input.src,
-                    body: Body {
-                        id: Some(self.id),
-                        in_reply_to: input.body.id,
-                        payload: Payload::EchoOk { echo },
-                    },
-                });
+                Ok(self.reply(&input, Payload::EchoOk { echo: echo.clone() }))
             }
-            Payload::EchoOk { .. } => return Err(anyhow!("unexpected input")),
-            Payload::InitOk => bail!("init_ok"),
-        };
+            Payload::EchoOk { .. } => bail!("received unexpected EchoOk"),
+            Payload::InitOk => bail!("received unexpected InitOk"),
+        }
     }
+}
+
+pub fn flush(stdout: &mut io::StdoutLock, value: &impl Serialize) -> anyhow::Result<()> {
+    serde_json::to_writer(&mut *stdout, value)?;
+    stdout.flush()?;
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -85,12 +89,11 @@ fn main() -> anyhow::Result<()> {
 
     let mut node = EchoNode::default();
     let inputs = serde_json::Deserializer::from_reader(stdin).into_iter::<Message>();
+
     for input in inputs {
         let reply = node.handle(input?)?;
-        let resp = serde_json::to_string(&reply)?;
-        serde_json::to_writer(&mut stdout, &reply);
-        stdout.write_all(b"\n");
+        flush(&mut stdout, &reply)?;
     }
+
     Ok(())
 }
-
