@@ -1,6 +1,7 @@
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
+use rand::Rng;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Message {
@@ -34,21 +35,25 @@ enum Payload {
     EchoOk {
         echo: String,
     },
+    Generate,
+    GenerateOk {
+        id: u32,
+    },
 }
 
 #[derive(Default)]
-struct EchoNode {
+struct Node {
     id: u32,
     node_id: String,
     node_ids: Vec<String>,
 }
 
-impl EchoNode {
+impl Node {
     fn reply(&mut self, input: &Message, payload: Payload) -> Message {
         let msg_id = self.id;
         self.id += 1;
         Message {
-            src: self.node_id.clone(),
+            src: input.dst.clone(),
             dst: input.src.clone(),
             body: Body {
                 id: Some(msg_id),
@@ -73,12 +78,23 @@ impl EchoNode {
             }
             Payload::EchoOk { .. } => bail!("received unexpected EchoOk"),
             Payload::InitOk => bail!("received unexpected InitOk"),
+            Payload::Generate => {
+                let id = self.generate();
+                Ok(self.reply(&input, Payload::GenerateOk { id }))
+            }
+            Payload::GenerateOk { .. } => bail!("received unexpected GenerateOk"),
         }
+    }
+
+    pub fn generate(&mut self) -> u32 {
+        let mut rng = rand::rng();
+        rng.random::<u32>()
     }
 }
 
 pub fn flush(stdout: &mut io::StdoutLock, value: &impl Serialize) -> anyhow::Result<()> {
     serde_json::to_writer(&mut *stdout, value)?;
+    stdout.write_all(b"\n")?;
     stdout.flush()?;
     Ok(())
 }
@@ -87,7 +103,7 @@ fn main() -> anyhow::Result<()> {
     let stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
 
-    let mut node = EchoNode::default();
+    let mut node = Node::default();
     let inputs = serde_json::Deserializer::from_reader(stdin).into_iter::<Message>();
 
     for input in inputs {
