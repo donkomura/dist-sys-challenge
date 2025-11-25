@@ -1,7 +1,8 @@
 use anyhow::bail;
-use serde::{Deserialize, Serialize};
-use std::io::{self, Write};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::{self, Write};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Message {
@@ -39,6 +40,18 @@ enum Payload {
     GenerateOk {
         id: u32,
     },
+    Broadcast {
+        message: u32,
+    },
+    BroadcastOk,
+    Read,
+    ReadOk {
+        messages: Vec<u32>,
+    },
+    Topology {
+        topology: HashMap<String, Vec<String>>,
+    },
+    TopologyOk,
 }
 
 #[derive(Default)]
@@ -46,6 +59,7 @@ struct Node {
     id: u32,
     node_id: String,
     node_ids: Vec<String>,
+    messages: Vec<u32>,
 }
 
 impl Node {
@@ -83,6 +97,23 @@ impl Node {
                 Ok(self.reply(&input, Payload::GenerateOk { id }))
             }
             Payload::GenerateOk { .. } => bail!("received unexpected GenerateOk"),
+            Payload::Broadcast { message } => {
+                self.messages.push(*message);
+                Ok(self.reply(&input, Payload::BroadcastOk))
+            }
+            Payload::BroadcastOk => bail!("received unexpected BroadcastOk"),
+            Payload::Read => Ok(self.reply(
+                &input,
+                Payload::ReadOk {
+                    messages: self.messages.clone(),
+                },
+            )),
+            Payload::ReadOk { .. } => bail!("received unexpected ReadOk"),
+            Payload::Topology { .. } => {
+                // TODO: respect topology
+                Ok(self.reply(&input, Payload::TopologyOk))
+            }
+            Payload::TopologyOk => bail!("received unexpected TopologyOk"),
         }
     }
 
